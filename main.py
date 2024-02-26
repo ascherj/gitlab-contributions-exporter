@@ -1,7 +1,10 @@
 import os
+from datetime import datetime
 
 from dotenv import load_dotenv
 import gitlab
+from git import Repo
+import dateutil.parser as dp
 
 class App():
 
@@ -10,6 +13,7 @@ class App():
         self.gl = None
         self.user = None
         self.events = None
+        self.repo = None
 
     def establish_connection(self) -> None:
         """
@@ -30,7 +34,7 @@ class App():
         Gets events for the user and filters out "left" and "deleted" events
         as those are not likely counted as "contributions" in GitHub.
         """
-        events = self.gl.events.list(per_page=100)
+        events = self.gl.events.list(per_page=1, sort="asc")
         print(f"Found {len(events)} events")
         events_as_dicts = [event.attributes for event in events]
         print(events_as_dicts)
@@ -38,7 +42,48 @@ class App():
             event for event in events_as_dicts
             if event["action_name"] != "left" and event["action_name"] != "deleted"
         ]
-        print(f"Filtered down to {len(filtered_events)} events")
+
+        self.events = filtered_events
+
+    def create_repo(self) -> Repo:
+        """
+        Creates a new repository.
+        """
+        repo = Repo.init("new_repo")
+        print(f"Created new repository at {repo.working_dir}")
+        return repo
+
+    def create_commit(self, event) -> None:
+        """
+        Creates a new commit from the event. The commit should not contain
+        any changes or staged files, but should contain:
+        - The type of action (e.g. "pushed to", "opened", "closed", etc.)
+        - The action target (e.g. "branch", "issue", "merge request", etc.)
+        - The associated project_id
+        - The commit hash, if applicable
+        The commit should be timestamped with the event's created_at attribute.
+        """
+
+        # Create a new commit
+
+        if self.repo:
+            commit = self.repo.index.commit(
+                f"{event['action_name']} {event.get('target_type', None)} in project {event['project_id']}",
+                author_date=dp.parse(event["created_at"])
+            )
+            print(f"Created commit {commit.hexsha} for event at {datetime.fromtimestamp(commit.authored_date)}")
+        else:
+            raise Exception("No repository found")
+
+
+
+    def create_commits_from_events(self) -> None:
+        """
+        Creates commits from the filtered events.
+        """
+        for event in self.events:
+            self.create_commit(event)
+
 
     def run(self) -> None:
         """
@@ -47,6 +92,8 @@ class App():
         self.establish_connection()
         self.authenticate()
         self.get_and_filter_user_events()
+        self.repo = self.create_repo()
+        self.create_commits_from_events()
 
 
 if __name__ == "__main__":

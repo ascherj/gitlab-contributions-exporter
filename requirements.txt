@@ -3,9 +3,11 @@ charset-normalizer==3.3.2
 gitdb==4.0.11
 GitPython==3.1.42
 idna==3.6
+python-dateutil==2.8.2
 python-dotenv==1.0.1
 python-gitlab==4.4.0
 requests==2.31.0
 requests-toolbelt==1.0.0
+six==1.16.0
 smmap==5.0.1
 urllib3==2.2.1
