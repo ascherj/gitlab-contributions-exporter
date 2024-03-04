@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+import json
 
 from dotenv import load_dotenv
 import gitlab
@@ -29,21 +30,19 @@ class App():
         self.user = self.gl.user
         print(f"Authenticated as {self.user.name} ({self.user.username})")
 
-    def get_and_filter_user_events(self) -> None:
+    def get_valid_user_events(self) -> None:
         """
-        Gets events for the user and filters out "left" and "deleted" events
-        as those are not likely counted as "contributions" in GitHub.
+        Gets events for the user. Filters to only include events with the following `action_name`s:
+        - "opened": Merge requests, issues, etc.
+        - "created": Projects
+
+        Other valid GitHub contributions, including commits and merged merge requests, will be
+        handled via other methods.
         """
-        events = self.gl.events.list(per_page=1, sort="asc")
+        events = self.gl.events.list(sort="asc", all=True, action="created")
         print(f"Found {len(events)} events")
         events_as_dicts = [event.attributes for event in events]
-        print(events_as_dicts)
-        filtered_events = [
-            event for event in events_as_dicts
-            if event["action_name"] != "left" and event["action_name"] != "deleted"
-        ]
-
-        self.events = filtered_events
+        self.events = events_as_dicts
 
     def create_repo(self) -> Repo:
         """
@@ -84,6 +83,14 @@ class App():
         for event in self.events:
             self.create_commit(event)
 
+    def export_events_to_file(self) -> None:
+        """
+        Exports the events to a file.
+        """
+        with open("events.json", "w") as f:
+            json_to_write = [event for event in self.events]
+            f.write(json.dumps(json_to_write, indent=4))
+
 
     def run(self) -> None:
         """
@@ -91,9 +98,10 @@ class App():
         """
         self.establish_connection()
         self.authenticate()
-        self.get_and_filter_user_events()
+        self.get_valid_user_events()
         self.repo = self.create_repo()
-        self.create_commits_from_events()
+        # self.create_commits_from_events()
+        self.export_events_to_file()
 
 
 if __name__ == "__main__":

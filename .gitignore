@@ -1,6 +1,9 @@
 # Generated repo
 new_repo/
 
+# Exported files
+events.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
