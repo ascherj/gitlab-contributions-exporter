@@ -14,6 +14,7 @@ class App():
         self.gl = None
         self.user = None
         self.events = None
+        self.merge_requests = None
         self.repo = None
 
     def establish_connection(self) -> None:
