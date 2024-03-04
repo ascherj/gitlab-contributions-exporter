@@ -44,6 +44,15 @@ class App():
         events_as_dicts = [event.attributes for event in events]
         self.events = events_as_dicts
 
+    def get_merged_merge_requests(self) -> None:
+        """
+        Gets all merge requests that have been merged by the user.
+        """
+        merge_requests = self.gl.mergerequests.list(merge_user_username=self.user.username)
+        print(f"Found {len(merge_requests)} merged merge requests")
+        merge_requests_as_dicts = [mr.attributes for mr in merge_requests]
+        self.merge_requests = merge_requests_as_dicts
+
     def create_repo(self) -> Repo:
         """
         Creates a new repository.
@@ -83,12 +92,12 @@ class App():
         for event in self.events:
             self.create_commit(event)
 
-    def export_events_to_file(self) -> None:
+    def export_dicts_to_file(self, dicts, filename) -> None:
         """
-        Exports the events to a file.
+        Exports the list of dictionaries to a file.
         """
-        with open("events.json", "w") as f:
-            json_to_write = [event for event in self.events]
+        with open(f"EXPORT_{filename}.json", "w") as f:
+            json_to_write = [d for d in dicts]
             f.write(json.dumps(json_to_write, indent=4))
 
 
@@ -98,11 +107,15 @@ class App():
         """
         self.establish_connection()
         self.authenticate()
-        self.get_valid_user_events()
-        self.repo = self.create_repo()
-        # self.create_commits_from_events()
-        self.export_events_to_file()
 
+        self.get_valid_user_events()
+        self.export_dicts_to_file(self.events, "events")
+
+        self.get_merged_merge_requests()
+        self.export_dicts_to_file(self.merge_requests, "merge_requests")
+
+        # self.repo = self.create_repo()
+        # self.create_commits_from_events()
 
 if __name__ == "__main__":
     if not load_dotenv():

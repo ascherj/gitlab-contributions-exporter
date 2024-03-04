@@ -2,7 +2,7 @@
 new_repo/
 
 # Exported files
-events.json
+EXPORT_*.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
