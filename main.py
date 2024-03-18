@@ -54,6 +54,50 @@ class App():
         merge_requests_as_dicts = [mr.attributes for mr in merge_requests]
         self.merge_requests = merge_requests_as_dicts
 
+    def get_projects(self) -> None:
+        """
+        Gets all projects for the user.
+        """
+        projects = self.gl.projects.list(all=True, membership=True, sort="asc")
+        print(f"Found {len(projects)} projects")
+        projects_as_dicts = [project.attributes for project in projects]
+        self.projects = projects_as_dicts
+
+    def get_commits(self, project_id: int, author: str) -> list:
+        """
+        Gets all commits for a project by the author.
+        """
+        try:
+            commits = self.gl.projects.get(project_id).commits.list(author=author, all=True)
+            print(f"Found {len(commits)} commits by {author} in project {project_id}")
+            commits_as_dicts = [commit.attributes for commit in commits]
+            return commits_as_dicts
+        except gitlab.exceptions.GitlabError as e:
+            print(f"Error: {e}")
+            return []
+
+    def get_user_commits_for_projects(self, projects: list, author: str) -> None:
+        """
+        Gets all commits for the user in the specified projects.
+        """
+        if not projects:
+            # attempt to read from file
+            try:
+                with open("EXPORT_projects.json", "r") as f:
+                    projects = json.load(f)
+            except FileNotFoundError:
+                print("No projects found")
+                return
+
+        commits = []
+        for project in projects:
+            if "forked_from_project" in project and self.user.username not in project["path_with_namespace"]:
+                print(f"Skipping forked project {project['id']}")
+                continue
+            commits += self.get_commits(project["id"], author)
+        print(f"Found {len(commits)} commits by {author} in {len(projects)} projects")
+        self.commits = commits
+
     def create_repo(self) -> Repo:
         """
         Creates a new repository.
@@ -101,6 +145,31 @@ class App():
             json_to_write = [d for d in dicts]
             f.write(json.dumps(json_to_write, indent=4))
 
+    def remove_duplicate_commits(self) -> None:
+        """
+        Removes duplicate commits from the list of commits.
+        """
+        clean_commits = []
+        commit_hashes = set()
+        for commit in self.commits:
+            if commit["id"] not in commit_hashes:
+                clean_commits.append(commit)
+                commit_hashes.add(commit["id"])
+        print(f"Removed {len(self.commits) - len(clean_commits)} duplicate commits")
+        self.commits = clean_commits
+
+    # def process_contributions(self) -> None:
+    #     """
+    #     Convert user's events, merge requests, and commits to a list of contributions.
+    #     Contributions should be sorted by date in ascending order. Contributions should be
+    #     dictionaries with the following keys
+    #     - "date": The date of the contribution
+    #     - "type": The type of contribution ("created project", "opened merge request", "merged merge request", "commit")
+    #     - "project_id": The project ID of the contribution
+    #     - "commit_hash": The commit hash of the contribution, if applicable
+    #     """
+
+
 
     def run(self) -> None:
         """
@@ -109,11 +178,19 @@ class App():
         self.establish_connection()
         self.authenticate()
 
-        self.get_valid_user_events()
-        self.export_dicts_to_file(self.events, "events")
+        # self.get_valid_user_events()
+        # self.export_dicts_to_file(self.events, "events")
 
-        self.get_merged_merge_requests()
-        self.export_dicts_to_file(self.merge_requests, "merge_requests")
+        # self.get_merged_merge_requests()
+        # self.export_dicts_to_file(self.merge_requests, "merge_requests")
+
+        self.get_projects()
+        self.export_dicts_to_file(self.projects, "projects")
+
+        self.get_user_commits_for_projects(self.projects, "jake.ascher@galvanize.com")
+        self.export_dicts_to_file(self.commits, "commits")
+        self.remove_duplicate_commits()
+        self.export_dicts_to_file(self.commits, "clean_commits")
 
         # self.repo = self.create_repo()
         # self.create_commits_from_events()
