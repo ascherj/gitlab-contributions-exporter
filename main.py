@@ -17,6 +17,27 @@ class App():
         self.merge_requests = None
         self.repo = None
 
+    def check_for_existing_exports(self) -> None:
+        """
+        Checks for existing exports and updates instance attributes if found.
+        """
+        if os.path.exists("EXPORT_events.json"):
+            print("Found existing events export")
+            with open("EXPORT_events.json", "r") as f:
+                self.events = json.load(f)
+        if os.path.exists("EXPORT_merge_requests.json"):
+            print("Found existing merge requests export")
+            with open("EXPORT_merge_requests.json", "r") as f:
+                self.merge_requests = json.load(f)
+        if os.path.exists("EXPORT_projects.json"):
+            print("Found existing projects export")
+            with open("EXPORT_projects.json", "r") as f:
+                self.projects = json.load(f)
+        if os.path.exists("EXPORT_clean_commits.json"):
+            print("Found existing clean commits export")
+            with open("EXPORT_clean_commits.json", "r") as f:
+                self.commits = json.load(f)
+
     def establish_connection(self) -> None:
         """
         Establishes a connection to the GitLab API using the private token.
@@ -49,7 +70,7 @@ class App():
         """
         Gets all merge requests that have been merged by the user.
         """
-        merge_requests = self.gl.mergerequests.list(merge_user_username=self.user.username)
+        merge_requests = self.gl.mergerequests.list(merge_user_username=self.user.username, sort="asc")
         print(f"Found {len(merge_requests)} merged merge requests")
         merge_requests_as_dicts = [mr.attributes for mr in merge_requests]
         self.merge_requests = merge_requests_as_dicts
@@ -100,13 +121,16 @@ class App():
 
     def create_repo(self) -> Repo:
         """
-        Creates a new repository.
+        Creates a new repository. If a repository already exists, it will be deleted and a new one will be created.
         """
+        if os.path.exists("new_repo"):
+            print("Deleting existing repository")
+            os.system("rm -rf new_repo")
         repo = Repo.init("new_repo")
         print(f"Created new repository at {repo.working_dir}")
         return repo
 
-    def create_commit(self, event) -> None:
+    def create_commit(self, contribution: dict, contribution_type: str) -> None:
         """
         Creates a new commit from the event. The commit should not contain
         any changes or staged files, but should contain:
@@ -116,15 +140,27 @@ class App():
         - The commit hash, if applicable
         The commit should be timestamped with the event's created_at attribute.
         """
-
         # Create a new commit
 
         if self.repo:
+            if contribution_type == "event":
+                if contribution["action_name"] == "created":
+                    message = f"Created project {contribution['project_id']}"
+                elif contribution["action_name"] == "opened":
+                    message = f"Opened merge request in project {contribution['project_id']}"
+                date = dp.parse(contribution["created_at"])
+            elif contribution_type == "merge_request":
+                message = f"Merged merge request in project {contribution['project_id']}"
+                date = dp.parse(contribution["merged_at"])
+            elif contribution_type == "commit":
+                message = f"Committed to project {contribution['project_id']}"
+                date = dp.parse(contribution["committed_date"])
+
             commit = self.repo.index.commit(
-                f"{event['action_name']} {event.get('target_type', None)} in project {event['project_id']}",
-                author_date=dp.parse(event["created_at"])
+                message,
+                author_date=date
             )
-            print(f"Created commit {commit.hexsha} for event at {datetime.fromtimestamp(commit.authored_date)}")
+            print(f"Created commit {commit.hexsha} for contribution at {datetime.fromtimestamp(commit.authored_date)}")
         else:
             raise Exception("No repository found")
 
@@ -135,7 +171,21 @@ class App():
         Creates commits from the filtered events.
         """
         for event in self.events:
-            self.create_commit(event)
+            self.create_commit(event, "event")
+
+    def create_commits_from_merge_requests(self) -> None:
+        """
+        Creates commits from the merge requests.
+        """
+        for merge_request in self.merge_requests:
+            self.create_commit(merge_request, "merge_request")
+
+    def create_commits_from_commits(self) -> None:
+        """
+        Creates commits from the user's commits.
+        """
+        for commit in self.commits:
+            self.create_commit(commit, "commit")
 
     def export_dicts_to_file(self, dicts, filename) -> None:
         """
@@ -158,25 +208,14 @@ class App():
         print(f"Removed {len(self.commits) - len(clean_commits)} duplicate commits")
         self.commits = clean_commits
 
-    # def process_contributions(self) -> None:
-    #     """
-    #     Convert user's events, merge requests, and commits to a list of contributions.
-    #     Contributions should be sorted by date in ascending order. Contributions should be
-    #     dictionaries with the following keys
-    #     - "date": The date of the contribution
-    #     - "type": The type of contribution ("created project", "opened merge request", "merged merge request", "commit")
-    #     - "project_id": The project ID of the contribution
-    #     - "commit_hash": The commit hash of the contribution, if applicable
-    #     """
-
-
-
     def run(self) -> None:
         """
         Runs the application.
         """
-        self.establish_connection()
-        self.authenticate()
+        self.check_for_existing_exports()
+
+        # self.establish_connection()
+        # self.authenticate()
 
         # self.get_valid_user_events()
         # self.export_dicts_to_file(self.events, "events")
@@ -184,16 +223,18 @@ class App():
         # self.get_merged_merge_requests()
         # self.export_dicts_to_file(self.merge_requests, "merge_requests")
 
-        self.get_projects()
-        self.export_dicts_to_file(self.projects, "projects")
+        # self.get_projects()
+        # self.export_dicts_to_file(self.projects, "projects")
 
-        self.get_user_commits_for_projects(self.projects, "jake.ascher@galvanize.com")
-        self.export_dicts_to_file(self.commits, "commits")
-        self.remove_duplicate_commits()
-        self.export_dicts_to_file(self.commits, "clean_commits")
+        # self.get_user_commits_for_projects(self.projects, "jake.ascher@galvanize.com")
+        # self.export_dicts_to_file(self.commits, "commits")
+        # self.remove_duplicate_commits()
+        # self.export_dicts_to_file(self.commits, "clean_commits")
 
-        # self.repo = self.create_repo()
-        # self.create_commits_from_events()
+        self.repo = self.create_repo()
+        self.create_commits_from_events()
+        self.create_commits_from_merge_requests()
+        self.create_commits_from_commits()
 
 if __name__ == "__main__":
     if not load_dotenv():
