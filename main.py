@@ -130,40 +130,25 @@ class App():
         print(f"Created new repository at {repo.working_dir}")
         return repo
 
-    def create_commit(self, contribution: dict, contribution_type: str) -> None:
+    def create_commit(self, contribution: dict) -> None:
         """
-        Creates a new commit from the event. The commit should not contain
-        any changes or staged files, but should contain:
-        - The type of action (e.g. "pushed to", "opened", "closed", etc.)
-        - The action target (e.g. "branch", "issue", "merge request", etc.)
-        - The associated project_id
-        - The commit hash, if applicable
-        The commit should be timestamped with the event's created_at attribute.
+        Creates a commit from the contribution.
         """
-        # Create a new commit
-
         if self.repo:
-            if contribution_type == "event":
-                if contribution["action_name"] == "created":
-                    message = f"Created project {contribution['project_id']}"
-                elif contribution["action_name"] == "opened":
-                    message = f"Opened merge request in project {contribution['project_id']}"
-                date = dp.parse(contribution["created_at"])
-            elif contribution_type == "merge_request":
-                message = f"Merged merge request in project {contribution['project_id']}"
-                date = dp.parse(contribution["merged_at"])
-            elif contribution_type == "commit":
-                message = f"Committed to project {contribution['project_id']}"
-                date = dp.parse(contribution["committed_date"])
-
             commit = self.repo.index.commit(
-                message,
-                author_date=date
+                message=contribution["message"] + f' {contribution["project_id"]}',
+                author_date=dp.parse(contribution["date"]),
             )
             print(f"Created commit {commit.hexsha} for contribution at {datetime.fromtimestamp(commit.authored_date)}")
         else:
             raise Exception("No repository found")
 
+    def create_commits_from_contributions(self) -> None:
+        """
+        Creates commits from the contributions.
+        """
+        for contribution in self.contributions:
+            self.create_commit(contribution)
 
 
     def create_commits_from_events(self) -> None:
@@ -208,6 +193,39 @@ class App():
         print(f"Removed {len(self.commits) - len(clean_commits)} duplicate commits")
         self.commits = clean_commits
 
+    def process_contributions(self) -> None:
+        """
+        Process the contributions into uniform dictionaries sorted by contribution time.
+        """
+        contributions = []
+        for event in self.events:
+            contributions.append({
+                "type": "event",
+                "message": "Created project" if event["action_name"] == "created" else "Opened merge request in project",
+                "project_id": event["project_id"],
+                "date": event["created_at"]
+            })
+
+        for merge_request in self.merge_requests:
+            contributions.append({
+                "type": "merge_request",
+                "message": "Merged merge request in project",
+                "project_id": merge_request["project_id"],
+                "date": merge_request["merged_at"]
+            })
+
+        for commit in self.commits:
+            contributions.append({
+                "type": "commit",
+                "message": "Committed to project",
+                "project_id": commit["project_id"],
+                "date": commit["committed_date"]
+            })
+
+        contributions.sort(key=lambda x: x["date"])
+        self.contributions = contributions
+
+
     def run(self) -> None:
         """
         Runs the application.
@@ -231,10 +249,13 @@ class App():
         # self.remove_duplicate_commits()
         # self.export_dicts_to_file(self.commits, "clean_commits")
 
+        self.process_contributions()
+
         self.repo = self.create_repo()
-        self.create_commits_from_events()
-        self.create_commits_from_merge_requests()
-        self.create_commits_from_commits()
+        # self.create_commits_from_events()
+        # self.create_commits_from_merge_requests()
+        # self.create_commits_from_commits()
+        self.create_commits_from_contributions()
 
 if __name__ == "__main__":
     if not load_dotenv():
