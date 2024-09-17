@@ -8,7 +8,8 @@ from git import Repo
 import dateutil.parser as dp
 
 class GitlabAPI:
-    def __init__(self, token) -> None:
+    def __init__(self, instance: str, token: str) -> None:
+        self.instance = instance
         self.token = token
         self.gl = None
         self.user = None
@@ -17,7 +18,7 @@ class GitlabAPI:
         """
         Establishes a connection to the GitLab API using the private token.
         """
-        self.gl = gitlab.Gitlab(private_token=self.token)
+        self.gl = gitlab.Gitlab(url=self.instance, private_token=self.token)
 
     def authenticate(self):
         """
@@ -25,27 +26,20 @@ class GitlabAPI:
         """
         self.gl.auth()
         self.user = self.gl.user
-        print(f"Authenticated as {self.user.name} ({self.user.username})")
+        print(f"Authenticated as {self.user.name} ({self.user.username}) on {self.instance}")
 
     def get_valid_user_events(self) -> list:
         """
         Gets events for the user. Filters to only include events with the following `action_name`s:
         - "opened": Merge requests, issues, etc.
         - "created": Projects
+        - "accepted": Merge requests
         """
         events = self.gl.events.list(sort="asc", all=True, action="created")
+        events.extend(self.gl.events.list(sort="asc", all=True, action="merged"))
         print(f"Found {len(events)} events")
         events_as_dicts = [event.attributes for event in events]
         return events_as_dicts
-
-    def get_merged_merge_requests(self) -> list:
-        """
-        Gets all merge requests that have been merged by the user.
-        """
-        merge_requests = self.gl.mergerequests.list(merge_user_username=self.user.username, sort="asc")
-        print(f"Found {len(merge_requests)} merged merge requests")
-        merge_requests_as_dicts = [mr.attributes for mr in merge_requests]
-        return merge_requests_as_dicts
 
     def get_projects(self) -> list:
         """
@@ -56,50 +50,35 @@ class GitlabAPI:
         projects_as_dicts = [project.attributes for project in projects]
         return projects_as_dicts
 
-    def get_user_commits_for_projects(self, projects: list, author: str) -> list:
+    def get_user_commits_for_projects(self, projects: list, author_email: str) -> list:
         """
         Gets all commits for the user in the specified projects.
         """
         commits = []
         for project in projects:
-            if "forked_from_project" in project and self.user.username not in project["path_with_namespace"]:
-                print(f"Skipping forked project {project['id']}")
-                continue
-            commits += self._get_commits(project["id"], author)
-        print(f"Found {len(commits)} commits by {author} in {len(projects)} projects")
-        clean_commits = self._remove_duplicate_commits(commits)
-        return clean_commits
+            commits += self._get_commits(project["id"], project["created_at"], author_email)
+        print(f"Found {len(commits)} commits by {author_email} in {len(projects)} projects")
+        return commits
 
-    def _get_commits(self, project_id: int, author: str) -> list:
+    def _get_commits(self, project_id: int, project_created_at: str, author_email: str) -> list:
         """
         Gets all commits for a project by the author.
         """
         try:
-            commits = self.gl.projects.get(project_id).commits.list(author=author, all=True)
-            print(f"Found {len(commits)} commits by {author} in project {project_id}")
-            commits_as_dicts = [commit.attributes for commit in commits]
+            commits = self.gl.projects.get(project_id).commits.list(author=author_email, all=True)
+            print(f"Found {len(commits)} commits by {author_email} in project {project_id}")
+            # Filter out commits that were created before the project was created
+            commits_as_dicts = [commit.attributes for commit in commits if dp.parse(commit.attributes["committed_date"]) > dp.parse(project_created_at)]
+            print(f"Kept {len(commits_as_dicts)} commits")
             return commits_as_dicts
         except gitlab.exceptions.GitlabError as e:
             print(f"Error: {e}")
             return []
 
-    def _remove_duplicate_commits(self, commits) -> list:
-        """
-        Removes duplicate commits from the list of commits.
-        """
-        clean_commits = []
-        commit_hashes = set()
-        for commit in commits:
-            if commit["id"] not in commit_hashes:
-                clean_commits.append(commit)
-                commit_hashes.add(commit["id"])
-        print(f"Removed {len(commits) - len(clean_commits)} duplicate commits")
-        return clean_commits
-
 class App:
 
-    def __init__(self, token: str) -> None:
-        self.api = GitlabAPI(token)
+    def __init__(self, instance: str, token: str) -> None:
+        self.api = GitlabAPI(instance, token)
         self.contributions = None
         self.events = None
         self.merge_requests = None
@@ -158,26 +137,26 @@ class App:
             self.create_commit(contribution)
 
 
-    def create_commits_from_events(self) -> None:
-        """
-        Creates commits from the filtered events.
-        """
-        for event in self.events:
-            self.create_commit(event, "event")
+    # def create_commits_from_events(self) -> None:
+    #     """
+    #     Creates commits from the filtered events.
+    #     """
+    #     for event in self.events:
+    #         self.create_commit(event, "event")
 
-    def create_commits_from_merge_requests(self) -> None:
-        """
-        Creates commits from the merge requests.
-        """
-        for merge_request in self.merge_requests:
-            self.create_commit(merge_request, "merge_request")
+    # def create_commits_from_merge_requests(self) -> None:
+    #     """
+    #     Creates commits from the merge requests.
+    #     """
+    #     for merge_request in self.merge_requests:
+    #         self.create_commit(merge_request, "merge_request")
 
-    def create_commits_from_commits(self) -> None:
-        """
-        Creates commits from the user's commits.
-        """
-        for commit in self.commits:
-            self.create_commit(commit, "commit")
+    # def create_commits_from_commits(self) -> None:
+    #     """
+    #     Creates commits from the user's commits.
+    #     """
+    #     for commit in self.commits:
+    #         self.create_commit(commit, "commit")
 
     def export_dicts_to_file(self, dicts, filename) -> None:
         """
@@ -226,41 +205,30 @@ class App:
         """
         # self.check_for_existing_exports()
 
-        # self.establish_connection()
-        # self.authenticate()
         self.api.establish_connection()
         self.api.authenticate()
 
-        # self.get_valid_user_events()
-        # self.export_dicts_to_file(self.events, "events")
+        # Get events (not including commits)
         self.events = self.api.get_valid_user_events()
+        self.export_dicts_to_file(self.events, "events")
 
-        # self.get_merged_merge_requests()
-        # self.export_dicts_to_file(self.merge_requests, "merge_requests")
-        self.merge_requests = self.api.get_merged_merge_requests()
-
-        # self.get_projects()
-        # self.export_dicts_to_file(self.projects, "projects")
+        # Get projects (to retrieve individual commits)
         self.projects = self.api.get_projects()
+        self.export_dicts_to_file(self.projects, "projects")
 
-        # self.get_user_commits_for_projects(self.projects, "jake.ascher@galvanize.com")
-        # self.export_dicts_to_file(self.commits, "commits")
-        self.commits = self.api.get_user_commits_for_projects(self.projects, "jake.ascher@galvanize.com")
+        # Get commits
+        self.commits = self.api.get_user_commits_for_projects(self.projects, self.api.user.commit_email)
+        self.export_dicts_to_file(self.commits, "commits")
 
-        # self.remove_duplicate_commits()
-        # self.export_dicts_to_file(self.commits, "clean_commits")
+        # self.process_contributions(self.events, self.merge_requests, self.commits)
 
-        self.process_contributions(self.events, self.merge_requests, self.commits)
-
-        self.repo = self.create_repo()
-        # self.create_commits_from_events()
-        # self.create_commits_from_merge_requests()
-        # self.create_commits_from_commits()
-        self.create_commits_from_contributions()
+        # self.repo = self.create_repo()
+        # self.create_commits_from_contributions()
 
 if __name__ == "__main__":
     if not load_dotenv():
         raise Exception("No environment variables found.")
-    token = os.getenv("PRIVATE-TOKEN")
-    app = App(token)
+    instance = os.getenv("GITLAB-INSTANCE")
+    token = os.getenv("GITLAB-TOKEN") if "galvanize" not in instance else os.getenv("GITLAB-GALVANIZE-TOKEN")
+    app = App(instance, token)
     app.run()
