@@ -50,23 +50,23 @@ class GitlabAPI:
         projects_as_dicts = [project.attributes for project in projects]
         return projects_as_dicts
 
-    def get_user_commits_for_projects(self, projects: list, author_email: str) -> list:
+    def get_user_commits_for_projects(self, projects: list) -> list:
         """
         Gets all commits for the user in the specified projects.
         """
         commits = []
         for project in projects:
-            commits += self._get_commits(project["id"], project["created_at"], author_email)
-        print(f"Found {len(commits)} commits by {author_email} in {len(projects)} projects")
+            commits += self._get_commits(project["id"], project["created_at"])
+        print(f"Found {len(commits)} commits by {self.user.commit_email} in {len(projects)} projects")
         return commits
 
-    def _get_commits(self, project_id: int, project_created_at: str, author_email: str) -> list:
+    def _get_commits(self, project_id: int, project_created_at: str) -> list:
         """
         Gets all commits for a project by the author.
         """
         try:
-            commits = self.gl.projects.get(project_id).commits.list(author=author_email, all=True)
-            print(f"Found {len(commits)} commits by {author_email} in project {project_id}")
+            commits = self.gl.projects.get(project_id).commits.list(author=self.user.commit_email, all=True)
+            print(f"Found {len(commits)} commits by {self.user.commit_email} in project {project_id}")
             # Filter out commits that were created before the project was created
             commits_as_dicts = [commit.attributes for commit in commits if dp.parse(commit.attributes["committed_date"]) > dp.parse(project_created_at)]
             print(f"Kept {len(commits_as_dicts)} commits")
@@ -217,7 +217,7 @@ class App:
         self.export_dicts_to_file(self.projects, "projects")
 
         # Get commits
-        self.commits = self.api.get_user_commits_for_projects(self.projects, self.api.user.commit_email)
+        self.commits = self.api.get_user_commits_for_projects(self.projects)
         self.export_dicts_to_file(self.commits, "commits")
 
         # self.process_contributions(self.events, self.merge_requests, self.commits)
