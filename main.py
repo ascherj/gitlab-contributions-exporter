@@ -77,33 +77,30 @@ class GitlabAPI:
 
 class App:
 
-    def __init__(self, instance: str, token: str) -> None:
-        self.api = GitlabAPI(instance, token)
-        self.contributions = None
-        self.events = None
-        self.merge_requests = None
+    def __init__(self, instances: list, tokens: list) -> None:
+        self.apis = [GitlabAPI(instance, token) for instance, token in zip(instances, tokens)]
+        self.contributions: list[dict] = None
+        self.events: list[dict] = None
+        self.projects: list[dict] = None
+        self.commits: list[dict] = None
+        self.repo: Repo = None
 
     def check_for_existing_exports(self) -> None:
         """
         Checks for existing exports and updates instance attributes if found.
         """
-        if os.path.exists("EXPORT_events.json"):
+        if os.path.exists("db/EXPORT_events.json"):
             print("Found existing events export")
-            with open("EXPORT_events.json", "r") as f:
+            with open("db/EXPORT_events.json", "r") as f:
                 self.events = json.load(f)
-        if os.path.exists("EXPORT_merge_requests.json"):
-            print("Found existing merge requests export")
-            with open("EXPORT_merge_requests.json", "r") as f:
-                self.merge_requests = json.load(f)
-        if os.path.exists("EXPORT_projects.json"):
+        if os.path.exists("db/EXPORT_projects.json"):
             print("Found existing projects export")
-            with open("EXPORT_projects.json", "r") as f:
+            with open("db/EXPORT_projects.json", "r") as f:
                 self.projects = json.load(f)
-        if os.path.exists("EXPORT_clean_commits.json"):
-            print("Found existing clean commits export")
-            with open("EXPORT_clean_commits.json", "r") as f:
+        if os.path.exists("db/EXPORT_commits.json"):
+            print("Found existing commits export")
+            with open("db/EXPORT_commits.json", "r") as f:
                 self.commits = json.load(f)
-
 
     def create_repo(self) -> Repo:
         """
@@ -121,9 +118,15 @@ class App:
         Creates a commit from the contribution.
         """
         if self.repo:
+            message = (
+                f"{contribution['message']}\n\n"
+                f"Date: {contribution['date']}\n"
+                f"(Project ID: {contribution['project_id']}, Instance: {contribution['instance']})"
+            )
+            commit_date = dp.parse(contribution["date"])
             commit = self.repo.index.commit(
-                message=contribution["message"] + f' {contribution["project_id"]}',
-                author_date=dp.parse(contribution["date"]),
+                message=message,
+                author_date=commit_date,
             )
             print(f"Created commit {commit.hexsha} for contribution at {datetime.fromtimestamp(commit.authored_date)}")
         else:
@@ -136,99 +139,123 @@ class App:
         for contribution in self.contributions:
             self.create_commit(contribution)
 
-
-    # def create_commits_from_events(self) -> None:
-    #     """
-    #     Creates commits from the filtered events.
-    #     """
-    #     for event in self.events:
-    #         self.create_commit(event, "event")
-
-    # def create_commits_from_merge_requests(self) -> None:
-    #     """
-    #     Creates commits from the merge requests.
-    #     """
-    #     for merge_request in self.merge_requests:
-    #         self.create_commit(merge_request, "merge_request")
-
-    # def create_commits_from_commits(self) -> None:
-    #     """
-    #     Creates commits from the user's commits.
-    #     """
-    #     for commit in self.commits:
-    #         self.create_commit(commit, "commit")
-
-    def export_dicts_to_file(self, dicts, filename) -> None:
+    def export_dicts_to_file(self, dicts: list[dict], filename: str) -> None:
         """
         Exports the list of dictionaries to a file.
         """
-        with open(f"EXPORT_{filename}.json", "w") as f:
+        os.makedirs("db", exist_ok=True)
+        with open(f"db/EXPORT_{filename}.json", "w") as f:
             json_to_write = [d for d in dicts]
             f.write(json.dumps(json_to_write, indent=4))
 
-    def process_contributions(self, events, merge_requests, commits) -> None:
+    def process_contributions(self) -> None:
         """
         Process the contributions into uniform dictionaries sorted by contribution time.
         """
         contributions = []
-        for event in events:
-            contributions.append({
-                "type": "event",
-                "message": "Created project" if event["action_name"] == "created" else "Opened merge request in project",
-                "project_id": event["project_id"],
-                "date": event["created_at"]
-            })
+        for event in self.events:
+            if event["action_name"] == "created":
+                contributions.append({
+                    "type": "project",
+                    "message": "Created project",
+                    "project_id": event["project_id"],
+                    "date": event["created_at"],
+                    "instance": event["instance"]
+                })
+            elif event["action_name"] == "opened":
+                if event["target_type"] == "MergeRequest":
+                    contributions.append({
+                        "type": "merge_request",
+                        "message": "Opened merge request",
+                        "project_id": event["project_id"],
+                        "date": event["created_at"],
+                        "instance": event["instance"]
+                    })
+                elif event["target_type"] == "Issue":
+                    contributions.append({
+                        "type": "issue",
+                        "message": "Opened issue",
+                        "project_id": event["project_id"],
+                        "date": event["created_at"],
+                        "instance": event["instance"]
+                    })
+                else:
+                    raise Exception(f"Unknown target type: {event['target_type']}")
+            elif event["action_name"] == "accepted":
+                contributions.append({
+                    "type": "merge_request",
+                    "message": "Accepted merge request",
+                    "project_id": event["project_id"],
+                    "date": event["created_at"],
+                    "instance": event["instance"]
+                })
+            else:
+                raise Exception(f"Unknown action name: {event['action_name']}")
 
-        for merge_request in merge_requests:
-            contributions.append({
-                "type": "merge_request",
-                "message": "Merged merge request in project",
-                "project_id": merge_request["project_id"],
-                "date": merge_request["merged_at"]
-            })
-
-        for commit in commits:
+        for commit in self.commits:
             contributions.append({
                 "type": "commit",
                 "message": "Committed to project",
                 "project_id": commit["project_id"],
-                "date": commit["committed_date"]
+                "date": commit["committed_date"],
+                "instance": commit["instance"]
             })
 
         contributions.sort(key=lambda x: x["date"])
         self.contributions = contributions
 
-
     def run(self) -> None:
         """
         Runs the application.
         """
-        # self.check_for_existing_exports()
+        self.check_for_existing_exports()
 
-        self.api.establish_connection()
-        self.api.authenticate()
+        if not self.events or not self.projects or not self.commits:
+            for api in self.apis:
+                api.establish_connection()
+                api.authenticate()
 
         # Get events (not including commits)
-        self.events = self.api.get_valid_user_events()
-        self.export_dicts_to_file(self.events, "events")
+        if not self.events:
+            self.events = []
+            for api in self.apis:
+                events = api.get_valid_user_events()
+                for event in events:
+                    event["instance"] = api.instance
+                self.events.extend(events)
+            self.export_dicts_to_file(self.events, "events")
 
         # Get projects (to retrieve individual commits)
-        self.projects = self.api.get_projects()
-        self.export_dicts_to_file(self.projects, "projects")
+        if not self.projects:
+            self.projects = []
+            for api in self.apis:
+                projects = api.get_projects()
+                for project in projects:
+                    project["instance"] = api.instance
+                self.projects.extend(projects)
+            self.export_dicts_to_file(self.projects, "projects")
 
         # Get commits
-        self.commits = self.api.get_user_commits_for_projects(self.projects)
-        self.export_dicts_to_file(self.commits, "commits")
+        if not self.commits:
+            self.commits = []
+            for api in self.apis:
+                instance_projects = [p for p in self.projects if p["instance"] == api.instance]
+                commits = api.get_user_commits_for_projects(instance_projects)
+                for commit in commits:
+                    commit["instance"] = api.instance
+                self.commits.extend(commits)
+            self.export_dicts_to_file(self.commits, "commits")
 
-        # self.process_contributions(self.events, self.merge_requests, self.commits)
+        self.process_contributions()
 
-        # self.repo = self.create_repo()
-        # self.create_commits_from_contributions()
+        self.repo = self.create_repo()
+        self.create_commits_from_contributions()
 
 if __name__ == "__main__":
     if not load_dotenv():
         raise Exception("No environment variables found.")
-    instance = os.getenv("GITLAB-INSTANCE")
-    token = os.getenv("GITLAB-TOKEN") if "galvanize" not in instance else os.getenv("GITLAB-GALVANIZE-TOKEN")
-    app = App(instance, token)
+    instances = os.getenv("GITLAB-INSTANCE").split(",")
+    tokens = os.getenv("GITLAB-TOKEN").split(",")
+    app = App(instances, tokens)
     app.run()
+    print("Finished processing all instances")
