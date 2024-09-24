@@ -153,8 +153,18 @@ class App:
         Process the contributions into uniform dictionaries sorted by contribution time.
         """
         contributions = []
+        counts = {
+            "projects_created": 0,
+            "opened": {
+                "merge_request": 0,
+                "issue": 0
+            },
+            "merge_requests_accepted": 0,
+            "commits": 0
+        }
         for event in self.events:
             if event["action_name"] == "created":
+                counts["projects_created"] += 1
                 contributions.append({
                     "type": "project",
                     "message": "Created project",
@@ -164,6 +174,7 @@ class App:
                 })
             elif event["action_name"] == "opened":
                 if event["target_type"] == "MergeRequest":
+                    counts["opened"]["merge_request"] += 1
                     contributions.append({
                         "type": "merge_request",
                         "message": "Opened merge request",
@@ -172,6 +183,7 @@ class App:
                         "instance": event["instance"]
                     })
                 elif event["target_type"] == "Issue":
+                    counts["opened"]["issue"] += 1
                     contributions.append({
                         "type": "issue",
                         "message": "Opened issue",
@@ -182,6 +194,7 @@ class App:
                 else:
                     raise Exception(f"Unknown target type: {event['target_type']}")
             elif event["action_name"] == "accepted":
+                counts["merge_requests_accepted"] += 1
                 contributions.append({
                     "type": "merge_request",
                     "message": "Accepted merge request",
@@ -193,6 +206,7 @@ class App:
                 raise Exception(f"Unknown action name: {event['action_name']}")
 
         for commit in self.commits:
+            counts["commits"] += 1
             contributions.append({
                 "type": "commit",
                 "message": "Committed to project",
@@ -203,7 +217,7 @@ class App:
 
         contributions.sort(key=lambda x: x["date"])
         self.contributions = contributions
-
+        print(counts)
     def run(self) -> None:
         """
         Runs the application.
