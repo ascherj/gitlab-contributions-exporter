@@ -1,6 +1,8 @@
 import os
 from datetime import datetime
 import json
+from typing import Union
+from custom_types import GitlabEvent, GitlabProject, GitlabCommit, GitlabContribution, GitlabCounts
 
 from dotenv import load_dotenv
 import gitlab
@@ -28,7 +30,7 @@ class GitlabAPI:
         self.user = self.gl.user
         print(f"Authenticated as {self.user.name} ({self.user.username}) on {self.instance}")
 
-    def get_valid_user_events(self) -> list:
+    def get_valid_user_events(self) -> list[GitlabEvent]:
         """
         Gets events for the user. Filters to only include events with the following `action_name`s:
         - "opened": Merge requests, issues, etc.
@@ -39,18 +41,20 @@ class GitlabAPI:
         events.extend(self.gl.events.list(sort="asc", all=True, action="merged"))
         print(f"Found {len(events)} events")
         events_as_dicts = [event.attributes for event in events]
-        return events_as_dicts
+        events_as_gitlab_events = [GitlabEvent(**event) for event in events_as_dicts]
+        return events_as_gitlab_events
 
-    def get_projects(self) -> list:
+    def get_projects(self) -> list[GitlabProject]:
         """
         Gets all projects for the user.
         """
         projects = self.gl.projects.list(all=True, membership=True, sort="asc")
         print(f"Found {len(projects)} projects")
         projects_as_dicts = [project.attributes for project in projects]
-        return projects_as_dicts
+        projects_as_gitlab_projects = [GitlabProject(**project) for project in projects_as_dicts]
+        return projects_as_gitlab_projects
 
-    def get_user_commits_for_projects(self, projects: list) -> list:
+    def get_user_commits_for_projects(self, projects: list) -> list[GitlabCommit]:
         """
         Gets all commits for the user in the specified projects.
         """
@@ -60,7 +64,7 @@ class GitlabAPI:
         print(f"Found {len(commits)} commits by {self.user.commit_email} in {len(projects)} projects")
         return commits
 
-    def _get_commits(self, project_id: int, project_created_at: str) -> list:
+    def _get_commits(self, project_id: int, project_created_at: str) -> list[GitlabCommit]:
         """
         Gets all commits for a project by the author.
         """
@@ -70,7 +74,8 @@ class GitlabAPI:
             # Filter out commits that were created before the project was created
             commits_as_dicts = [commit.attributes for commit in commits if dp.parse(commit.attributes["committed_date"]) > dp.parse(project_created_at)]
             print(f"Kept {len(commits_as_dicts)} commits")
-            return commits_as_dicts
+            commits_as_gitlab_commits = [GitlabCommit(**commit) for commit in commits_as_dicts]
+            return commits_as_gitlab_commits
         except gitlab.exceptions.GitlabError as e:
             print(f"Error: {e}")
             return []
@@ -79,11 +84,24 @@ class App:
 
     def __init__(self, instances: list, tokens: list) -> None:
         self.apis = [GitlabAPI(instance, token) for instance, token in zip(instances, tokens)]
-        self.contributions: list[dict] = None
-        self.events: list[dict] = None
-        self.projects: list[dict] = None
-        self.commits: list[dict] = None
+        self.contributions: list[GitlabContribution] = []
+        self.events: list[GitlabEvent] = []
+        self.projects: list[GitlabProject] = []
+        self.commits: list[GitlabCommit] = []
         self.repo: Repo = None
+        self.counts: GitlabCounts = {
+            "projects": {
+                "created": 0,
+            },
+            "merge_requests": {
+                "opened": 0,
+                "accepted": 0
+            },
+            "issues": {
+                "opened": 0,
+            },
+            "commits": 0
+        }
 
     def check_for_existing_exports(self) -> None:
         """
@@ -113,7 +131,7 @@ class App:
         print(f"Created new repository at {repo.working_dir}")
         return repo
 
-    def create_commit(self, contribution: dict) -> None:
+    def create_commit(self, contribution: GitlabContribution) -> None:
         """
         Creates a commit from the contribution.
         """
@@ -139,12 +157,12 @@ class App:
         for contribution in self.contributions:
             self.create_commit(contribution)
 
-    def export_dicts_to_file(self, dicts: list[dict], filename: str) -> None:
+    def export_dicts_to_file(self, dicts: list[Union[GitlabEvent, GitlabProject, GitlabCommit]], file_suffix: str) -> None:
         """
         Exports the list of dictionaries to a file.
         """
         os.makedirs("db", exist_ok=True)
-        with open(f"db/EXPORT_{filename}.json", "w") as f:
+        with open(f"db/EXPORT_{file_suffix}.json", "w") as f:
             json_to_write = [d for d in dicts]
             f.write(json.dumps(json_to_write, indent=4))
 
@@ -152,21 +170,13 @@ class App:
         """
         Process the contributions into uniform dictionaries sorted by contribution time.
         """
-        contributions = []
-        counts = {
-            "projects_created": 0,
-            "opened": {
-                "merge_request": 0,
-                "issue": 0
-            },
-            "merge_requests_accepted": 0,
-            "commits": 0
-        }
+        contributions: list[GitlabContribution] = []
+
         for event in self.events:
             if event["action_name"] == "created":
-                counts["projects_created"] += 1
+                self.counts["projects"]["created"] += 1
                 contributions.append({
-                    "type": "project",
+                    "contribution_type": "project",
                     "message": "Created project",
                     "project_id": event["project_id"],
                     "date": event["created_at"],
@@ -174,18 +184,18 @@ class App:
                 })
             elif event["action_name"] == "opened":
                 if event["target_type"] == "MergeRequest":
-                    counts["opened"]["merge_request"] += 1
+                    self.counts["merge_requests"]["opened"] += 1
                     contributions.append({
-                        "type": "merge_request",
+                        "contribution_type": "merge_request",
                         "message": "Opened merge request",
                         "project_id": event["project_id"],
                         "date": event["created_at"],
                         "instance": event["instance"]
                     })
                 elif event["target_type"] == "Issue":
-                    counts["opened"]["issue"] += 1
+                    self.counts["issues"]["opened"] += 1
                     contributions.append({
-                        "type": "issue",
+                        "contribution_type": "issue",
                         "message": "Opened issue",
                         "project_id": event["project_id"],
                         "date": event["created_at"],
@@ -194,9 +204,9 @@ class App:
                 else:
                     raise Exception(f"Unknown target type: {event['target_type']}")
             elif event["action_name"] == "accepted":
-                counts["merge_requests_accepted"] += 1
+                self.counts["merge_requests"]["accepted"] += 1
                 contributions.append({
-                    "type": "merge_request",
+                    "contribution_type": "merge_request",
                     "message": "Accepted merge request",
                     "project_id": event["project_id"],
                     "date": event["created_at"],
@@ -206,9 +216,9 @@ class App:
                 raise Exception(f"Unknown action name: {event['action_name']}")
 
         for commit in self.commits:
-            counts["commits"] += 1
+            self.counts["commits"] += 1
             contributions.append({
-                "type": "commit",
+                "contribution_type": "commit",
                 "message": "Committed to project",
                 "project_id": commit["project_id"],
                 "date": commit["committed_date"],
@@ -217,7 +227,13 @@ class App:
 
         contributions.sort(key=lambda x: x["date"])
         self.contributions = contributions
-        print(counts)
+
+    def _get_total_counts(self) -> int:
+        """
+        Gets the total counts for the contributions.
+        """
+        return sum(count for category in self.counts.values() for count in (category.values() if isinstance(category, dict) else [category]))
+
     def run(self) -> None:
         """
         Runs the application.
