@@ -6,7 +6,8 @@ from pydantic import BaseModel
 import httpx
 import os
 from dotenv import load_dotenv
-
+from runner import GitlabContributionProcessor
+from pydantic_types import GitlabContribution
 load_dotenv()
 
 app = FastAPI()
@@ -26,6 +27,7 @@ FRONTEND_URL = "http://localhost:5173"
 GITLAB_AUTHORIZE_URL = "https://gitlab.com/oauth/authorize"
 GITLAB_TOKEN_URL = "https://gitlab.com/oauth/token"
 GITLAB_USER_URL = "https://gitlab.com/api/v4/user"
+GITLAB_EVENTS_URL = "https://gitlab.com/api/v4/events"
 
 oauth2_scheme = OAuth2AuthorizationCodeBearer(
     authorizationUrl=GITLAB_AUTHORIZE_URL,
@@ -71,13 +73,13 @@ async def login_callback(code: str, response: Response):
         print("token_data", token_data)
         access_token = token_data["access_token"]
 
-        user_response = await client.get(
-            GITLAB_USER_URL,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        user_response.raise_for_status()
-        user_data = user_response.json()
-        print("user_data", user_data)
+        # user_response = await client.get(
+        #     GITLAB_USER_URL,
+        #     headers={"Authorization": f"Bearer {access_token}"},
+        # )
+        # user_response.raise_for_status()
+        # user_data = user_response.json()
+        # print("user_data", user_data)
 
 
     response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax")
@@ -103,12 +105,28 @@ async def profile(token: str = Depends(get_token_from_cookie)):
         )
         user_response.raise_for_status()
         user_data = user_response.json()
-    return {
-        "id": user_data["id"],
-        "name": user_data["name"],
-        "username": user_data["username"],
-        "email": user_data["email"]
-    }
+        print("user_data", user_data)
+
+        return {
+            "id": user_data["id"],
+            "name": user_data["name"],
+            "username": user_data["username"],
+            "email": user_data["email"]
+        }
+
+@app.get("/contributions", response_model=list[GitlabContribution])
+async def contributions(token: str = Depends(get_token_from_cookie)):
+    # gitlab_api = GitlabAPIWrapper(instance="https://gitlab.com", oauth_token=token)
+    # gitlab_api.establish_connection()
+    # gitlab_api.authenticate()
+    # events = gitlab_api.get_valid_user_events()
+    # return events
+    processor = GitlabContributionProcessor(instances=["https://gitlab.com"], tokens=[token])
+    processor.check_for_existing_exports()
+    processor.process_contributions()
+    return processor.contributions
+
+
 
 if __name__ == "__main__":
     import uvicorn
