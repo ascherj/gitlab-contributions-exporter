@@ -50,44 +50,68 @@ const ContributionDetail = styled.p`
 const Profile = () => {
   const [profile, setProfile] = useState<User | null>(null);
   const [contributions, setContributions] = useState<GitlabContribution[] | null>(null);
-  const getProfile = async () => {
-    const response = await fetch('http://localhost:8000/profile', {
-      credentials: 'include',
-    });
-    return response;
-  };
 
-  const getContributions = async () => {
-    const response = await fetch('http://localhost:8000/contributions', {
-      credentials: 'include',
-    });
-    return response;
+  // const getProfile = async () => {
+  //   const response = await fetch('http://localhost:8000/profile', {
+  //     credentials: 'include',
+  //   });
+  //   return response;
+  // };
+
+  // const getContributions = async () => {
+  //   const response = await fetch('http://localhost:8000/contributions', {
+  //     credentials: 'include',
+  //   });
+  //   return response;
+  // };
+
+  const handleGitlabLogin = () => {
+    window.location.href = 'http://localhost:8000/gitlab/login';
   };
 
   useEffect(() => {
-    const fetchProfileAndContributions = async () => {
-      try {
-        const profileResponse = await getProfile();
-        if (!profileResponse.ok) {
-          throw new Error('Failed to fetch profile');
-        }
-        const profileData = await profileResponse.json();
-        setProfile(profileData);
+    // const fetchProfile = async () => {
+    //   try {
+    //     const profileResponse = await getProfile();
+    //     if (!profileResponse.ok) {
+    //       throw new Error('Failed to fetch profile');
+    //     }
+    //     const profileData = await profileResponse.json();
+    //     setProfile(profileData);
+    //   } catch (error) {
+    //     console.error('Error fetching profile:', error);
+    //   }
+    // };
 
-        const contributionsResponse = await getContributions();
-        if (!contributionsResponse.ok) {
-          throw new Error('Failed to fetch contributions');
+    // fetchProfile();
+
+    const getCurrentUser = async () => {
+      const response = await fetch('http://localhost:8000/users/me', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
-        const contributionsData = await contributionsResponse.json();
-        console.log(contributionsData);
-        setContributions(contributionsData);
-      } catch (error) {
-        console.error('Error fetching data:', error);
-      }
+      });
+      const data = await response.json();
+      console.log(data);
+      return response;
     };
 
-    fetchProfileAndContributions();
+    getCurrentUser();
   }, []);
+
+  const fetchContributions = async () => {
+    try {
+      const contributionsResponse = await getContributions();
+      if (!contributionsResponse.ok) {
+        throw new Error('Failed to fetch contributions');
+      }
+      const contributionsData = await contributionsResponse.json();
+      console.log(contributionsData);
+      setContributions(contributionsData);
+    } catch (error) {
+      console.error('Error fetching contributions:', error);
+    }
+  };
 
   if (!profile) {
     return <div>Loading...</div>;
@@ -98,18 +122,23 @@ const Profile = () => {
       <h1>Welcome, {profile.name}</h1>
       <p>Username: {profile.username}</p>
       <p>Email: {profile.email}</p>
-      <h2>Contributions</h2>
-      <ContributionsGrid>
-        {contributions && contributions.map((contribution, index) => (
-          <ContributionCard key={index}>
-            <ContributionTitle>{contribution.contribution_type}</ContributionTitle>
-            <ContributionDetail><strong>Message:</strong> {contribution.message}</ContributionDetail>
-            <ContributionDetail><strong>Project ID:</strong> {contribution.project_id}</ContributionDetail>
-            <ContributionDetail><strong>Date:</strong> {new Date(contribution.date).toLocaleDateString()}</ContributionDetail>
-            <ContributionDetail><strong>Instance:</strong> {contribution.instance}</ContributionDetail>
-          </ContributionCard>
-        ))}
-      </ContributionsGrid>
+      <button onClick={handleGitlabLogin}>Login with GitLab to see contributions</button>
+      {contributions && (
+        <>
+          <h2>Contributions</h2>
+          <ContributionsGrid>
+            {contributions.map((contribution, index) => (
+              <ContributionCard key={index}>
+                <ContributionTitle>{contribution.contribution_type}</ContributionTitle>
+                <ContributionDetail><strong>Message:</strong> {contribution.message}</ContributionDetail>
+                <ContributionDetail><strong>Project ID:</strong> {contribution.project_id}</ContributionDetail>
+                <ContributionDetail><strong>Date:</strong> {new Date(contribution.date).toLocaleDateString()}</ContributionDetail>
+                <ContributionDetail><strong>Instance:</strong> {contribution.instance}</ContributionDetail>
+              </ContributionCard>
+            ))}
+          </ContributionsGrid>
+        </>
+      )}
     </ProfileContainer>
   );
 };

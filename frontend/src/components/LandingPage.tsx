@@ -3,27 +3,31 @@ import { useNavigate } from 'react-router-dom';
 
 const LandingPage = () => {
   const [isLogin, setIsLogin] = useState(true);
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    let endpoint = isLogin ? '/api/login' : '/api/signup';
+    let endpoint = isLogin ? '/token' : '/signup';
     endpoint = 'http://localhost:8000' + endpoint;
+
+    const loginFormData = new URLSearchParams();
+    loginFormData.append('username', username);
+    loginFormData.append('password', password);
 
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': isLogin ? 'application/x-www-form-urlencoded' : 'application/json', // Use the appropriate content type based on the login state
       },
-      body: JSON.stringify({ email, password }),
+      body: isLogin ? loginFormData : JSON.stringify({ username, password }), // Use the appropriate body based on the login state
     });
 
     if (response.ok) {
       const data = await response.json();
       localStorage.setItem('token', data.access_token);
-      navigate('/profile');
+      navigate('/welcome');
     } else {
       alert('Error: ' + (await response.text()));
     }
@@ -34,10 +38,10 @@ const LandingPage = () => {
       <h1>GitLab Contributions Exporter</h1>
       <form onSubmit={handleSubmit}>
         <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          type="text"
+          placeholder="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
           required
         />
         <input
